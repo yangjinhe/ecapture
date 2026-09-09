@@ -50,6 +50,7 @@ env:
 	@echo "LAST_GIT_TAG             $(LAST_GIT_TAG)"
 	@echo "BPF_NOCORE_TAG           $(BPF_NOCORE_TAG)"
 	@echo "KERN_RELEASE             $(KERN_RELEASE)"
+	@echo "LINUX_SOURCE_PATH        $(LINUX_SOURCE_PATH)"
 	@echo "KERN_BUILD_PATH          $(KERN_BUILD_PATH)"
 	@echo "KERN_SRC_PATH            $(KERN_SRC_PATH)"
 	@echo "TARGET_ARCH              $(TARGET_ARCH)"
@@ -85,7 +86,7 @@ help:
 	@echo "    $$ make rpm VERSION=0.0.0 RELEASE=1		# build ecapture rpm"
 	@echo ""
 	@echo "# clean"
-	@echo "    $$ make clean				# wipe ./bin/ ./user/bytecode/ ./assets/"
+	@echo "    $$ make clean				# wipe ./bin/ ./bytecode/ ./assets/"
 	@echo ""
 	@echo "# test"
 	@echo "    $$ CROSS_ARCH=arm64 make ...		# cross compile, build eCapture for arm64(aarch64) on amd64(x86_64) host"
@@ -96,21 +97,22 @@ help:
 
 .PHONY: prepare
 prepare:
-	$(CMD_CD) $(LINUX_SOURCE_PATH)
-	$(KERNEL_HEADER_GEN) || exit 1
+	if [ -d "$(LINUX_SOURCE_PATH)" ]; then \
+		$(CMD_CD) $(LINUX_SOURCE_PATH) && $(KERNEL_HEADER_GEN) || { echo "Kernel header generation failed"; exit 1; } \
+	elif [ -n "$(CROSS_ARCH)" ]; then \
+		$(CMD_ECHO) "linux source not found with path: $(LINUX_SOURCE_PATH)" || exit 1; \
+    fi
 
 .PHONY: clean assets build ebpf
 
 .PHONY: clean
 clean:
-	$(CMD_RM) -f user/bytecode/*.d
-	$(CMD_RM) -f user/bytecode/*.o
+	$(CMD_RM) -f bytecode/*.d
+	$(CMD_RM) -f bytecode/*.o
 	$(CMD_RM) -f assets/ebpf_probe.go
 	$(CMD_RM) -f bin/ecapture
 	$(CMD_RM) -f .check*
-	@if [ -e ./lib/libpcap/Makefile ] ; then \
-		cd ./lib/libpcap && make clean
-	fi
+	if test -e "./lib/libpcap/Makefile"; then $(MAKE) -C ./lib/libpcap clean; fi
 
 .PHONY: $(KERN_OBJECTS)
 $(KERN_OBJECTS): %.o: %.c \
@@ -120,16 +122,9 @@ $(KERN_OBJECTS): %.o: %.c \
 	$(CMD_CLANG) -D__TARGET_ARCH_$(LINUX_ARCH) \
 		$(EXTRA_CFLAGS) \
 		$(BPFHEADER) \
-		-target bpfel -c $< -o $(subst kern/,user/bytecode/,$(subst .o,_core.o,$@)) \
+		-target bpfel -c $< -o $(subst kern/,bytecode/,$(subst .o,_core.o,$@)) \
 		-fno-ident -fdebug-compilation-dir . -g -D__BPF_TARGET_MISSING="GCC error \"The eBPF is using target specific macros, please provide -target\"" \
-		-MD -MP
-	$(CMD_CLANG) -D__TARGET_ARCH_$(LINUX_ARCH) \
-		$(EXTRA_CFLAGS) \
-		$(BPFHEADER) \
-		-DKERNEL_LESS_5_2 \
-		-target bpfel -c $< -o $(subst kern/,user/bytecode/,$(subst .c,_core$(KERNEL_LESS_5_2_PREFIX),$<)) \
-		-fno-ident -fdebug-compilation-dir . -g -D__BPF_TARGET_MISSING="GCC error \"The eBPF is using target specific macros, please provide -target\"" \
-		-MD -MP
+		-MD -MP || exit 1
 
 .PHONY: autogen
 autogen: .checkver_$(CMD_BPFTOOL)
@@ -144,80 +139,67 @@ ebpf_noncore: prepare $(KERN_OBJECTS_NOCORE)
 .PHONY: $(KERN_OBJECTS_NOCORE)
 $(KERN_OBJECTS_NOCORE): %.nocore: %.c \
 	| .checkver_$(CMD_CLANG) \
-	.checkver_$(CMD_GO)
-	$(CMD_CLANG) \
-			$(EXTRA_CFLAGS_NOCORE) \
-    		$(BPFHEADER) \
-			-I $(KERN_SRC_PATH)/arch/$(LINUX_ARCH)/include \
-			-I $(KERN_BUILD_PATH)/arch/$(LINUX_ARCH)/include/generated \
-			-I $(KERN_SRC_PATH)/include \
-			-I $(KERN_SRC_PATH)/arch/$(LINUX_ARCH)/include/uapi \
-			-I $(KERN_BUILD_PATH)/arch/$(LINUX_ARCH)/include/generated/uapi \
-			-I $(KERN_SRC_PATH)/include/uapi \
-			-I $(KERN_BUILD_PATH)/include/generated/uapi \
-    		-c $< \
-    		-o - |$(CMD_LLC) \
-    		-march=bpf \
-    		-filetype=obj \
-    		-o $(subst kern/,user/bytecode/,$(subst .c,_noncore.o,$<))
+	.checkver_$(CMD_GO) \
+	prepare
 	$(CMD_CLANG) \
 			$(EXTRA_CFLAGS_NOCORE) \
 			$(BPFHEADER) \
 			-I $(KERN_SRC_PATH)/arch/$(LINUX_ARCH)/include \
 			-I $(KERN_BUILD_PATH)/arch/$(LINUX_ARCH)/include/generated \
 			-I $(KERN_SRC_PATH)/include \
+			-I $(KERN_SRC_PATH)/include/linux \
 			-I $(KERN_SRC_PATH)/arch/$(LINUX_ARCH)/include/uapi \
 			-I $(KERN_BUILD_PATH)/arch/$(LINUX_ARCH)/include/generated/uapi \
 			-I $(KERN_SRC_PATH)/include/uapi \
 			-I $(KERN_BUILD_PATH)/include/generated/uapi \
-			-DKERNEL_LESS_5_2 \
 			-c $< \
 			-o - |$(CMD_LLC) \
 			-march=bpf \
 			-filetype=obj \
-			-o $(subst kern/,user/bytecode/,$(subst .c,_noncore$(KERNEL_LESS_5_2_PREFIX),$<))
+			-o $(subst kern/,bytecode/,$(subst .c,_noncore.o,$<)) || exit 1
 
+# Generate assets for all eBPF bytecode
 .PHONY: assets
-assets: \
-	.checkver_$(CMD_GO) \
-	ebpf \
-	ebpf_noncore
-	$(CMD_GO) run github.com/shuLhan/go-bindata/cmd/go-bindata $(IGNORE_LESS52) -pkg assets -o "assets/ebpf_probe.go" $(wildcard ./user/bytecode/*.o)
+assets: .checkver_$(CMD_GO) ebpf ebpf_noncore
+	$(CMD_GO) run github.com/shuLhan/go-bindata/cmd/go-bindata $(IGNORE_LESS52) -pkg assets -o "assets/ebpf_probe.go" $(wildcard ./bytecode/*.o)
+	sed -i '1s/^\/\/ Code generated/\/\/go:build ebpfassets\n\/\/ Code generated/' assets/ebpf_probe.go
 
+# Generate assets for non-core eBPF bytecode only
 .PHONY: assets_noncore
 assets_noncore: \
 	.checkver_$(CMD_GO) \
 	ebpf_noncore
-	$(CMD_GO) run github.com/shuLhan/go-bindata/cmd/go-bindata $(IGNORE_LESS52) -pkg assets -o "assets/ebpf_probe.go" $(wildcard ./user/bytecode/*.o)
+	$(CMD_GO) run github.com/shuLhan/go-bindata/cmd/go-bindata $(IGNORE_LESS52) -pkg assets -o "assets/ebpf_probe.go" $(wildcard ./bytecode/*.o)
+	sed -i '1s/^\/\/ Code generated/\/\/go:build ebpfassets\n\/\/ Code generated/' assets/ebpf_probe.go
 
 
+# Build libpcap static library
 .PHONY: $(TARGET_LIBPCAP)
 $(TARGET_LIBPCAP):
 	test -f ./lib/libpcap/configure || git submodule update --init
 	cd lib/libpcap && \
-		CC=$(CMD_CC_PREFIX)$(CMD_CC) AR=$(CMD_AR_PREFIX)$(CMD_AR) CFLAGS="-O2 -g -gdwarf-4 -static" ./configure --disable-rdma --disable-shared --disable-usb \
+		CC=$(CMD_CC_PREFIX)$(CMD_CC) AR=$(CMD_AR_PREFIX)$(CMD_AR) CFLAGS="-O2 -g -gdwarf-4 -static -Wno-unused-result" ./configure --disable-rdma --disable-shared --disable-usb \
 			--disable-netmap --disable-bluetooth --disable-dbus --without-libnl \
 			--without-dpdk --without-dag --without-septel --without-snf \
 			--without-gcc --with-pcap=linux \
 			--without-turbocap --host=$(LIBPCAP_ARCH) && \
-	CC=$(CMD_CC_PREFIX)$(CMD_CC) AR=$(CMD_AR_PREFIX)$(CMD_AR) make
+	CC=$(CMD_CC_PREFIX)$(CMD_CC) AR=$(CMD_AR_PREFIX)$(CMD_AR) make || exit 1
 
+# Build CO-RE eBPF bytecode and golang binary
 .PHONY: build
-build: \
-	.checkver_$(CMD_GO) \
-	$(TARGET_LIBPCAP) \
-	assets \
-	assets_noncore
+build: .checkver_$(CMD_GO) $(TARGET_LIBPCAP) assets assets_noncore
 	$(call allow-override,VERSION_FLAG,$(UNAME_R))
 	$(call gobuild, $(ANDROID))
 
 
+# Build non-core eBPF bytecode and golang binary
 .PHONY: build_noncore
 build_noncore: \
 	.checkver_$(CMD_GO) \
 	$(TARGET_LIBPCAP) \
 	assets_noncore
 	$(call allow-override,VERSION_FLAG,$(HOST_ARCH))
+	$(call allow-override,BYTECODE_FILES,noncore)
 	$(call gobuild, $(ANDROID))
 
 # Format the code
@@ -231,3 +213,126 @@ format:
 	@clang-format -i -style=$(STYLE) kern/openssl_masterkey_3.2.h
 	@clang-format -i -style=$(STYLE) kern/boringssl_masterkey.h
 	@clang-format -i -style=$(STYLE) utils/*.c
+
+# run unit tests with race detector
+.PHONY: test-race
+test-race: \
+	.checkver_$(CMD_GO) \
+	$(TARGET_LIBPCAP)
+	CGO_ENABLED=1 \
+	CGO_CFLAGS='-O2 -g -I$(CURDIR)/lib/libpcap/' \
+	CGO_LDFLAGS='-O2 -g -L$(CURDIR)/lib/libpcap/ -lpcap' \
+	GOOS=linux GOARCH=$(GOARCH) CC=$(CMD_CC_PREFIX)$(CMD_CC) \
+	go test -v -race -tags dynamic,ebpfassets ./... -coverprofile=coverage.out
+
+# run Bash module e2e test
+.PHONY: e2e-bash
+e2e-bash:
+	bash ./test/e2e/bash_e2e_test.sh
+
+# run Zsh module e2e test
+.PHONY: e2e-zsh
+e2e-zsh:
+	bash ./test/e2e/zsh_e2e_test.sh
+
+# run MySQL module e2e test
+.PHONY: e2e-mysql
+e2e-mysql:
+	bash ./test/e2e/mysql_e2e_test.sh
+
+# run PostgreSQL module e2e test
+.PHONY: e2e-postgres
+e2e-postgres:
+	bash ./test/e2e/postgres_e2e_test.sh
+
+# run TLS module e2e test
+.PHONY: e2e-tls
+e2e-tls:
+	bash ./test/e2e/tls_e2e_test.sh
+
+# run GnuTLS module e2e test
+.PHONY: e2e-gnutls
+e2e-gnutls:
+	bash ./test/e2e/gnutls_e2e_test.sh
+
+# run GoTLS module e2e test
+.PHONY: e2e-gotls
+e2e-gotls:
+	bash ./test/e2e/gotls_e2e_test.sh
+
+# run advanced TLS text mode tests
+.PHONY: e2e-tls-text-advanced
+e2e-tls-text-advanced:
+	bash ./test/e2e/tls_text_advanced_test.sh
+
+# run advanced TLS pcap mode tests
+.PHONY: e2e-tls-pcap-advanced
+e2e-tls-pcap-advanced:
+	bash ./test/e2e/tls_pcap_advanced_test.sh
+
+# run advanced TLS keylog mode tests
+.PHONY: e2e-tls-keylog-advanced
+e2e-tls-keylog-advanced:
+	bash ./test/e2e/tls_keylog_advanced_test.sh
+
+# run advanced GoTLS tests
+.PHONY: e2e-gotls-advanced
+e2e-gotls-advanced:
+	bash ./test/e2e/gotls_advanced_test.sh
+
+# run advanced Bash tests
+.PHONY: e2e-bash-advanced
+e2e-bash-advanced:
+	bash ./test/e2e/bash_advanced_test.sh
+
+# run advanced MySQL tests
+.PHONY: e2e-mysql-advanced
+e2e-mysql-advanced:
+	bash ./test/e2e/mysql_advanced_test.sh
+
+# run edge cases and error handling tests
+.PHONY: e2e-edge-cases
+e2e-edge-cases:
+	bash ./test/e2e/edge_cases_test.sh
+
+# run ecaptureQ WebSocket event streaming e2e test
+.PHONY: e2e-ecaptureq
+e2e-ecaptureq:
+	bash ./test/e2e/ecaptureq_e2e_test.sh
+
+# run all basic e2e tests
+.PHONY: e2e-basic
+e2e-basic: e2e-bash e2e-tls e2e-gnutls e2e-gotls
+	@echo "All basic e2e tests completed"
+
+# run all advanced e2e tests
+.PHONY: e2e-advanced
+e2e-advanced: e2e-tls-text-advanced e2e-tls-pcap-advanced e2e-tls-keylog-advanced e2e-gotls-advanced e2e-bash-advanced e2e-edge-cases e2e-ecaptureq
+	@echo "All advanced e2e tests completed"
+
+# run all comprehensive e2e tests (basic + advanced)
+.PHONY: e2e
+e2e: e2e-basic e2e-advanced
+	@echo "All e2e tests completed"
+
+# Android e2e tests
+.PHONY: e2e-android-tls
+e2e-android-tls:
+	bash ./test/e2e/android/android_tls_e2e_test.sh
+
+.PHONY: e2e-android-gotls
+e2e-android-gotls:
+	bash ./test/e2e/android/android_gotls_e2e_test.sh
+
+.PHONY: e2e-android-all
+e2e-android-all: e2e-android-tls e2e-android-gotls
+	@echo "All Android e2e tests completed"
+
+.PHONY: build-android-tests
+build-android-tests:
+	bash ./test/e2e/android/build_android_tests.sh
+
+.PHONY: setup-android-env
+setup-android-env:
+	bash ./test/e2e/android/setup_android_env.sh
+

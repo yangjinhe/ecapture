@@ -1,0 +1,309 @@
+{
+  "repo_notes": [
+    {
+      "content": "eCapture is an eBPF-based traffic capture tool that collects plaintext from TLS/SSL libraries without a CA certificate, audits shell commands (bash/zsh), and intercepts SQL queries (MySQL, PostgreSQL). Supported platforms: Linux x86_64 (kernel >=4.18) and aarch64 (kernel >=5.5), plus Android GKI. Core stack: Go for the userspace control plane, C for the eBPF kernel programs, with Clang/LLVM as the compile toolchain. Main modules: cli/ (Cobra CLI entrypoints), internal/probe/ (probe implementations), internal/output/ (writers and encoders), pkg/event_processor/ (parsing pipeline), pkg/ecaptureq/ (WebSocket event push). Both CO-RE (BTF) and non-CO-RE runtime modes are supported. The wiki targets three audiences: end users running probes for capture, SREs and security engineers integrating eCapture in production, and developers extending eCapture or adding new probes."
+    }
+  ],
+  "pages": [
+    {
+      "title": "Introducing eCapture",
+      "purpose": "Top-level landing page for the project. Briefly describes what eCapture is, the problem it solves, and acts as a navigation index for the introduction, capabilities, and platform support sub-pages. This page itself stays high level; details belong on the children.",
+      "parent": null,
+      "page_notes": [
+        {
+          "content": "Use the headline section of README.md and README-zh_Hans.md as the source for the high-level description."
+        }
+      ]
+    },
+    {
+      "title": "Introduction and Core Capabilities",
+      "purpose": "Detailed introduction to eCapture: an eBPF-based plaintext traffic capture tool that does not require CA certificates. Covers the three core capabilities (TLS plaintext capture, database SQL auditing, shell command auditing), comparison with traditional tools such as tcpdump and mitmproxy, and typical use cases (security audit, traffic analysis, database monitoring, compliance).",
+      "parent": "Introducing eCapture",
+      "page_notes": [
+        {
+          "content": "Reference README.md, README-zh_Hans.md, and the docs/ directory for blog/feature articles. The list of probes can be enumerated from cli/cmd/ (tls.go, gotls.go, gnutls.go, nss.go, mysqld.go, postgres.go, bash.go, zsh.go)."
+        }
+      ]
+    },
+    {
+      "title": "Supported Platforms and Versions",
+      "purpose": "List the operating systems eCapture supports (Linux x86_64/arm64 and Android GKI), minimum kernel versions (x86_64 >=4.18, aarch64 >=5.5), the difference between CO-RE and non-CO-RE modes, the verified distro list, and any feature-set differences across platform variants.",
+      "parent": "Introducing eCapture",
+      "page_notes": [
+        {
+          "content": "Kernel version constraints live in variables.mk and Makefile. CO-RE depends on BTF; check with: ls /sys/kernel/btf/vmlinux. Android cross-compilation lives in builder/Dockerfile."
+        }
+      ]
+    },
+    {
+      "title": "Getting Started",
+      "purpose": "Entry point for new users: covers installation, environment checks, the first capture example, and how to choose an output format. Sub-pages walk through each step so users can run their first capture within five minutes.",
+      "parent": null,
+      "page_notes": [
+        {
+          "content": "This page is a chapter index. The sub-pages cover installation, minimum privileges, quick start, and output formats."
+        }
+      ]
+    },
+    {
+      "title": "Installation and Prerequisites",
+      "purpose": "Describes every install path for eCapture: prebuilt binary downloads from GitHub Releases, RPM/DEB packages, Docker images, and building from source. Also covers prerequisites (kernel version, BTF availability, required Linux Capabilities) and common installation troubleshooting.",
+      "parent": "Getting Started",
+      "page_notes": [
+        {
+          "content": "Package build logic lives in builder/Makefile.release and builder/rpmBuild.spec. The Docker image is defined in builder/Dockerfile. Source build steps are in Makefile and functions.mk."
+        }
+      ]
+    },
+    {
+      "title": "Minimum Privileges",
+      "purpose": "Explains the minimum Linux Capabilities required by eCapture under different kernels: kernels >=5.8 can use the fine-grained set CAP_BPF + CAP_PERFMON + CAP_SYS_PTRACE, kernels <5.8 require CAP_SYS_ADMIN, and pcapng mode additionally needs CAP_NET_ADMIN. Includes setcap command examples and Kubernetes securityContext examples for container deployments.",
+      "parent": "Getting Started",
+      "page_notes": [
+        {
+          "content": "See docs/minimum-privileges.md for the full matrix; this page should reference and translate that table directly."
+        }
+      ]
+    },
+    {
+      "title": "Quick Start (Run the First Example in 5 Minutes)",
+      "purpose": "Hands-on walkthrough using the simplest TLS plaintext capture as the example, from launching eCapture to seeing decrypted output. Includes example commands, the expected output format, --pid filtering, and short examples targeting curl, wget, and nginx.",
+      "parent": "Getting Started",
+      "page_notes": [
+        {
+          "content": "Example commands are derived from the flag definitions in cli/cmd/tls.go. Output samples should reference docs/example-outputs.md."
+        }
+      ]
+    },
+    {
+      "title": "Output Formats (text / pcap / keylog)",
+      "purpose": "Explains the three output modes of eCapture in detail: text mode (direct plaintext output), pcap/pcapng mode (Wireshark-compatible, requires CAP_NET_ADMIN), and keylog mode (NSS Key Log format for Wireshark TLS decryption). Also covers how the underlying encoders (plain/JSON/protobuf) combine with output targets (stdout/file/TCP/WebSocket), with CLI examples for each mode.",
+      "parent": "Getting Started",
+      "page_notes": [
+        {
+          "content": "Writers live in internal/output/writers/ (file_writer.go, pcap_writer.go, keylog_writer.go, tcp_writer.go, websocket_writer.go). Encoders live in internal/output/encoders/ (plain_encoder.go, json_encoder.go, protobuf_encoder.go). The writer factory is registered in internal/output/writers/factory.go."
+        }
+      ]
+    },
+    {
+      "title": "Probe Reference",
+      "purpose": "Reference index for every probe module in eCapture. Each child page documents one capture target with its principle of operation, supported binaries, CLI usage, and caveats. Aimed at users who want to dive deeper into a specific scenario.",
+      "parent": null,
+      "page_notes": [
+        {
+          "content": "Probes live under internal/probe/ in subdirectories: openssl/, gotls/, gnutls/, nspr/, mysql/, postgres/, bash/, zsh/. CLI entrypoints are the matching files under cli/cmd/."
+        }
+      ]
+    },
+    {
+      "title": "TLS/SSL Plaintext Capture (OpenSSL / BoringSSL)",
+      "purpose": "Describes the tls probe: automatic discovery of OpenSSL/BoringSSL libraries, supported OpenSSL version range (1.0.2 ~ 3.x), how SSL_read/SSL_write uprobes are attached, the special handling for Android BoringSSL (a_13 ~ a_16 and na branches), all three output mode examples, and the full Wireshark integration flow.",
+      "parent": "Probe Reference",
+      "page_notes": [
+        {
+          "content": "Probe implementation: internal/probe/openssl/. CLI flags: cli/cmd/tls.go. eBPF kernel programs: kern/openssl_*_kern.c (multiple version branches). The bytecode/ directory has prebuilt .o files; the version naming convention is the source of truth for the supported version matrix."
+        }
+      ]
+    },
+    {
+      "title": "GoTLS Capture",
+      "purpose": "Describes the gotls probe: capture for Go's native TLS implementation (crypto/tls), supported Go versions, how stripped Go binaries are handled (symbol table required), the difference between register-based and stack-based Go calling conventions (pre/post Go 1.17), example usage, and known limitations.",
+      "parent": "Probe Reference",
+      "page_notes": [
+        {
+          "content": "Probe implementation: internal/probe/gotls/. CLI flags: cli/cmd/gotls.go. eBPF kernel program: kern/gotls_kern.c. Hook points: crypto/tls.(*Conn).Write and crypto/tls.(*Conn).Read."
+        }
+      ]
+    },
+    {
+      "title": "GnuTLS Capture",
+      "purpose": "Describes the gnutls probe: applicable binaries (wget, curl --with-gnutls, etc.), supported GnuTLS versions (3.6.12 ~ 3.8.7, multiple version branches), automatic library path discovery, keylog output support, and guidance on choosing between this probe and the OpenSSL probe.",
+      "parent": "Probe Reference",
+      "page_notes": [
+        {
+          "content": "Probe implementation: internal/probe/gnutls/. CLI flags: cli/cmd/gnutls.go. eBPF kernel programs: kern/gnutls_*_kern.c (multi-version). bytecode/ has gnutls_3_6_12 ~ gnutls_3_8_7 .o files; use that as the support matrix source."
+        }
+      ]
+    },
+    {
+      "title": "NSS / NSPR Capture",
+      "purpose": "Describes the nss/nspr probe: applicable binaries (Firefox, curl --with-nss, Thunderbird, etc.), the PR_Read/PR_Write hook strategy in NSPR, library path configuration, keylog output support, and guidance on choosing between this probe and the GnuTLS or OpenSSL probes.",
+      "parent": "Probe Reference",
+      "page_notes": [
+        {
+          "content": "Probe implementation: internal/probe/nspr/. CLI flags: cli/cmd/nss.go. eBPF kernel program: kern/nspr_kern.c. bytecode/ contains nspr_kern_core.o and nspr_kern_noncore.o."
+        }
+      ]
+    },
+    {
+      "title": "Database Traffic Capture (MySQL / PostgreSQL)",
+      "purpose": "Describes the mysqld and postgres probes: supported database versions (MySQL 5.6/5.7/8.0, MariaDB, PostgreSQL), how SQL statements are captured (uprobes on dispatch_command and exec_simple_query), how to manually specify function names or offsets, output examples, and production caveats (performance impact, permissions).",
+      "parent": "Probe Reference",
+      "page_notes": [
+        {
+          "content": "MySQL probe: internal/probe/mysql/. PostgreSQL probe: internal/probe/postgres/. CLI flags: cli/cmd/mysqld.go and cli/cmd/postgres.go. eBPF kernel programs: kern/mysqld_kern.c."
+        }
+      ]
+    },
+    {
+      "title": "Shell Auditing (Bash / Zsh)",
+      "purpose": "Describes the bash and zsh probes: how readline functions (readline / rl_line_buffer) are hooked via uprobes, supported shell versions, the output format (username, PID, timestamp, command), and typical use in security auditing and operational compliance.",
+      "parent": "Probe Reference",
+      "page_notes": [
+        {
+          "content": "Bash probe: internal/probe/bash/. Zsh probe: internal/probe/zsh/. CLI flags: cli/cmd/bash.go and cli/cmd/zsh.go. eBPF kernel program: kern/bash_kern.c."
+        }
+      ]
+    },
+    {
+      "title": "Integration and Deployment",
+      "purpose": "For users running eCapture in production. Covers remote event streaming, the HTTP dynamic configuration API, output and log configuration, and performance overhead.",
+      "parent": null,
+      "page_notes": [
+        {
+          "content": "Chapter index. Sub-pages cover the WebSocket event stream, the HTTP dynamic config API, log/output configuration, and performance benchmarks."
+        }
+      ]
+    },
+    {
+      "title": "Remote Event Streaming (eCaptureQ WebSocket)",
+      "purpose": "Describes the eCaptureQ live event push mechanism: starting the WebSocket server (--ecaptureq), the Protobuf message format (LogEntry, LogType, Heartbeat), the 128-message startup buffer (history replay on connect), the reference Go client, and a multi-language client integration pattern.",
+      "parent": "Integration and Deployment",
+      "page_notes": [
+        {
+          "content": "Server: pkg/ecaptureq/. Protobuf definitions: protobuf/proto/, generated code in protobuf/gen/. Sample client: examples/ecaptureq_client/. WebSocket writer: internal/output/writers/websocket_writer.go. CLI flags: cli/cmd/ecaptureq.go. Protocol doc: protobuf/PROTOCOLS-zh_Hans.md."
+        }
+      ]
+    },
+    {
+      "title": "Remote Dynamic Configuration API",
+      "purpose": "Describes the runtime HTTP API for hot-updating eCapture configuration: starting the HTTP server (--listen, default 127.0.0.1:28256), the POST paths exposed by each probe (/tls, /gotls, /gnutls, /nss, /bash, /mysqld, /postgress, etc.), JSON request/response shapes, and platform-specific path differences (Linux vs Android). Includes curl examples and typical use cases (live retargeting without restarts).",
+      "parent": "Integration and Deployment",
+      "page_notes": [
+        {
+          "content": "HTTP server: cli/http/. Detailed API: docs/remote-config-update-api-zh_Hans.md. Probe config structs: internal/config/."
+        }
+      ]
+    },
+    {
+      "title": "Logging and Output Configuration",
+      "purpose": "Documents every output-related flag: --logaddr (TCP log forwarding), --eventaddr (event forwarding address), output priority rules, log rotation (rotatelog), switching between stdout and file output, and integration patterns with external systems such as ELK and Kafka.",
+      "parent": "Integration and Deployment",
+      "page_notes": [
+        {
+          "content": "TCP writer: internal/output/writers/tcp_writer.go. Logger writer: internal/output/writers/logger_writer.go. Global CLI flags: cli/cmd/root.go. Logging library: internal/logger/."
+        }
+      ]
+    },
+    {
+      "title": "Performance Overhead and Benchmarks",
+      "purpose": "Explains the performance model of uprobe-based capture (uprobe enter/exit cost ~1-2us, eBPF program cost, perf buffer cost), benchmarking methodology (wrk + HTTPS server comparison), tuning guidance for high-throughput scenarios (ring buffer vs perf buffer, sampling rate), and a production performance evaluation checklist.",
+      "parent": "Integration and Deployment",
+      "page_notes": [
+        {
+          "content": "Source: docs/performance-benchmarks.md. The benchmark scripts and methodology are described there in detail; reference directly."
+        }
+      ]
+    },
+    {
+      "title": "FAQ and Troubleshooting",
+      "purpose": "A consolidated list of the most common issues users hit during install, runtime, and integration: BTF missing (non-CO-RE fallback), insufficient privileges (Capability errors), unsupported kernels, probe attach failures (missing symbols, wrong library path), empty output, Android-specific issues, and how to gather diagnostic information for an Issue report.",
+      "parent": null,
+      "page_notes": [
+        {
+          "content": "Error logic: internal/errors/. Environment detection: cli/cmd/env_detection.go. BTF detection: ls /sys/kernel/btf/vmlinux. Common error keywords can be lifted from internal/probe/base/."
+        }
+      ]
+    },
+    {
+      "title": "Detection and Defense",
+      "purpose": "For security teams: how to detect unauthorized eCapture or similar eBPF tools running on a host (bpftool prog list, uprobe_events, perf event monitoring) and what defenses to apply (seccomp, restricted eBPF capabilities, audit logging). Also documents the legitimate boundary for eCapture itself.",
+      "parent": null,
+      "page_notes": [
+        {
+          "content": "Source: docs/defense-detection.md. Detection commands: sudo bpftool prog list; sudo cat /sys/kernel/debug/tracing/uprobe_events; ps aux | grep ecapture."
+        }
+      ]
+    },
+    {
+      "title": "Architecture",
+      "purpose": "For developers and users who want to understand how eCapture works internally. Covers the overall three-layer architecture and the core design of the probe framework and event pipeline. This page is a chapter index; details live on the children.",
+      "parent": null,
+      "page_notes": [
+        {
+          "content": "References: docs/handler-refactoring-architecture.md, docs/refactoring-guide.md, internal/README.md."
+        }
+      ]
+    },
+    {
+      "title": "Three-layer Architecture",
+      "purpose": "Walks through the three architectural layers: the eBPF kernel layer (uprobe/kprobe/TC classifier C programs compiled into .o bytecode), the userspace probe layer (probe modules receiving and dispatching events), and the CLI/output layer (Cobra commands plus Writer/Encoder composition). Traces the full data path from kernel hook to final output, and explains how CO-RE (BTF) loading differs from non-CO-RE.",
+      "parent": "Architecture",
+      "page_notes": [
+        {
+          "content": "CO-RE loading: internal/builder/. eBPF bytecode embedding: assets/ebpf_probe_stub.go (go-bindata generated). Data flow: kern/*.c -> bytecode/*.o -> internal/probe/*/ (load) -> pkg/event_processor/ (parse) -> internal/output/ (write)."
+        }
+      ]
+    },
+    {
+      "title": "Probe Framework and Extension Mechanism",
+      "purpose": "Documents the domain interfaces in internal/probe: the Probe/Event/Configuration/EventDecoder contracts, the BaseProbe template-method pattern (lifecycle), the factory registration pattern (internal/factory/), and the BaseConfig common configuration inheritance (internal/config/). Establishes the conceptual foundation for the 'How to add a new probe' page.",
+      "parent": "Architecture",
+      "page_notes": [
+        {
+          "content": "Interfaces: internal/domain/ (Probe, Event, Configuration, EventDecoder). BaseProbe: internal/probe/base/. Factory: internal/factory/. Config base: internal/config/ (base_config.go or similar)."
+        }
+      ]
+    },
+    {
+      "title": "Event Processing Pipeline",
+      "purpose": "Describes the full processing chain after events leave the eBPF perf/ring buffer: the EventProcessor scheduling loop, the eventWorker UUID affinity assignment (in-order processing per connection), IParser protocol identification (HTTP/1.1, HTTP/2, DefaultParser), the ProcessStatus state machine, ticker-based timeout reclamation, and the final write to output writers.",
+      "parent": "Architecture",
+      "page_notes": [
+        {
+          "content": "Core: pkg/event_processor/processor.go (EventProcessor), pkg/event_processor/iworker.go (eventWorker), pkg/event_processor/iparser.go (IParser). HTTP parsers: pkg/event_processor/http_request.go, http_response.go, http2_request.go, http2_response.go. Tests: pkg/event_processor/processor_test.go, http2_request_test.go."
+        }
+      ]
+    },
+    {
+      "title": "Developer Guide",
+      "purpose": "For engineers contributing to eCapture or building on top of it. Covers local builds, adding new probes, the testing strategy, and CI/CD. Chapter index page.",
+      "parent": null,
+      "page_notes": [
+        {
+          "content": "Sources: CONTRIBUTING.md, docs/compilation.md, docs/compilation-zh_Hans.md."
+        }
+      ]
+    },
+    {
+      "title": "Compilation and Build",
+      "purpose": "Step-by-step build instructions: difference between CO-RE and non-CO-RE builds and when to choose each, required toolchain (clang >=14, llvm, go-bindata, git submodule init), common Makefile targets (make, make nocore, make android), arm64 and Android cross-compilation, and the Docker build environment.",
+      "parent": "Developer Guide",
+      "page_notes": [
+        {
+          "content": "Build files: Makefile, functions.mk, variables.mk. Toolchain init: builder/init_env.sh. Docker build: builder/Dockerfile. Release build: builder/Makefile.release. Detailed steps: docs/compilation-zh_Hans.md."
+        }
+      ]
+    },
+    {
+      "title": "How to Add a New Probe",
+      "purpose": "Step-by-step guide for adding a new probe to eCapture: implementing the Probe / Configuration / EventDecoder interfaces in internal/domain/, writing the eBPF C program in kern/, embedding the bytecode via go-bindata, registering with internal/factory/, adding a CLI subcommand under cli/cmd/, and writing unit tests. Includes a comparison with an existing probe (bash) and a checklist.",
+      "parent": "Developer Guide",
+      "page_notes": [
+        {
+          "content": "Reference probe (simplest): internal/probe/bash/ and cli/cmd/bash.go. Factory registration example: internal/factory/. Interfaces: internal/domain/. eBPF template: kern/bash_kern.c. Build integration: bytecode rules in Makefile."
+        }
+      ]
+    },
+    {
+      "title": "Testing Strategy and CI/CD",
+      "purpose": "Describes the testing system of eCapture: Go unit tests (event processor, HTTP/2 parser, eBPF utility functions, probe factory), end-to-end tests (.github/workflows/e2e.yml running on real Linux kernels), CodeQL security scans, and the GitHub Actions multi-arch build (x86_64/arm64) plus RPM/DEB packaging and automated release pipeline.",
+      "parent": "Developer Guide",
+      "page_notes": [
+        {
+          "content": "Tests: pkg/event_processor/*_test.go. E2E: test/ directory and the e2e workflows under .github/workflows/. CI build: .github/workflows/. Release: builder/Makefile.release. E2E doc: docs/e2e-tests.md."
+        }
+      ]
+    }
+  ]
+}

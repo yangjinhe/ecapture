@@ -13,10 +13,10 @@ name: "CodeQL"
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, v2, v1 ]
   pull_request:
     # The branches below must be a subset of the branches above
-    branches: [ master ]
+    branches: [ master, v2, v1 ]
   schedule:
     - cron: '42 15 * * 3'
 
@@ -37,31 +37,28 @@ jobs:
         # Learn more about CodeQL language support at https://git.io/codeql-language-support
 
     steps:
-      - uses: actions/setup-go@v3
-        with:
-          go-version: '1.21.0'
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: 'recursive'
           fetch-depth: 0
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.0'
+
       - name: Install Compilers
         run: |
           sudo apt-get update
-          kernel_ver=`uname -r | cut -d'-' -f 1`
-          sudo apt-get install --yes build-essential pkgconf libelf-dev llvm-12 clang-12 linux-tools-common linux-tools-generic flex bison gcc-aarch64-linux-gnu libssl-dev linux-source-${kernel_ver}
-          for tool in "clang" "llc" "llvm-strip"
-          do
-            sudo rm -f /usr/bin/$tool
-            sudo ln -s /usr/bin/$tool-12 /usr/bin/$tool
-          done
+          sudo apt-get install --yes build-essential pkgconf libelf-dev llvm clang linux-tools-common linux-tools-generic flex bison gcc-aarch64-linux-gnu libssl-dev linux-source
           cd /usr/src
-          sudo tar -xf linux-source-${kernel_ver}.tar.bz2
-          cd /usr/src/linux-source-${kernel_ver}
+          source_file=$(find . -maxdepth 1 -name "*linux-source*.tar.bz2")
+          source_dir=$(echo "$source_file" | sed 's/\.tar\.bz2//g')  
+          sudo tar -xf $source_file
+          cd $source_dir
           test -f .config || sudo make oldconfig
           sudo make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- prepare V=0
-          ls -al /usr/src/linux-source-${kernel_ver}
+          ls -al /usr/src/$source_dir
         shell: bash
       # Initializes the CodeQL tools for scanning.
       - name: Initialize CodeQL

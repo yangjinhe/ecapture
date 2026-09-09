@@ -33,8 +33,8 @@ CMD_CD ?= cd
 CMD_DPKG-DEB ?= dpkg-deb
 CMD_ECHO ?= echo
 
-KERNEL_LESS_5_2_PREFIX ?= _less52.o
-STYLE    ?= "{BasedOnStyle: Google, IndentWidth: 4}"
+BYTECODE_FILES ?= all
+STYLE    ?= "{BasedOnStyle: Google, IndentWidth: 4, TabWidth: 4, UseTab: Never, ColumnLimit: 120, AlignAfterOpenBracket: DontAlign, BinPackArguments: true, BreakStringLiterals: false}"
 IGNORE_LESS52 ?=
 AUTOGENCMD ?=
 BPFHEADER := -I ./kern
@@ -63,7 +63,7 @@ ifndef ANDROID
 endif
 
 ifeq ($(ANDROID),1)
-	TARGET_TAG := androidgki
+	TARGET_TAG := ecap_android
 	TARGET_OS = android
 endif
 
@@ -83,7 +83,7 @@ TAG_COMMIT := $(shell git rev-list --abbrev-commit --tags --max-count=1)
 TAG := $(shell git describe --abbrev=0 --tags ${TAG_COMMIT} 2>/dev/null || true)
 COMMIT := $(shell git rev-parse --short HEAD)
 DATE := $(shell git log -1 --format=%cd --date=format:"%Y%m%d")
-LAST_GIT_TAG := $(TAG:v%=%)-$(DATE)-$(COMMIT)
+LAST_GIT_TAG := $(TAG)-$(DATE)-$(COMMIT)
 RPM_RELEASE := $(DATE).$(COMMIT)
 
 #VERSION_NUM ?= $(if $(SNAPSHOT_VERSION),$(SNAPSHOT_VERSION),$(LAST_GIT_TAG))
@@ -105,10 +105,8 @@ BUILD_DATE := $(shell date +%Y-%m-%d)
 HOST_ARCH := $(shell uname -m)
 UNAME_R := $(shell uname -r)
 HOST_VERSION_SHORT := $(shell uname -r | cut -d'-' -f 1)
-
-# linux-source-5.15.0.tar.bz2
-LINUX_SOURCE_PATH ?= /usr/src/linux-source-$(HOST_VERSION_SHORT)
-LINUX_SOURCE_TAR ?= /usr/src/linux-source-$(HOST_VERSION_SHORT).tar.bz2
+LINUX_SOURCE_FILE := $(shell find /usr/src -maxdepth 1 -name "*linux-source*.tar.bz2")
+LINUX_SOURCE_PATH := $(shell echo $(LINUX_SOURCE_FILE) | $(CMD_SED) 's/\.tar\.bz2//g')
 
 ifdef CROSS_ARCH
 	ifeq ($(HOST_ARCH),aarch64)
@@ -171,14 +169,19 @@ endif
 # include vpath
 #
 ifdef CROSS_ARCH
-	KERNEL_HEADER_GEN = test -e arch/$(LINUX_ARCH)/kernel/asm-offsets.s || yes "" | $(SUDO) make ARCH=$(LINUX_ARCH) CROSS_COMPILE=$(CMD_CC_PREFIX) prepare V=0
-	KERN_HEADERS = $(LINUX_SOURCE_PATH)
+	KERNEL_HEADER_GEN = yes "" | $(SUDO) make ARCH=$(LINUX_ARCH) CROSS_COMPILE=$(CMD_CC_PREFIX) prepare V=0
+	ifdef KERN_HEADERS
+		LINUX_SOURCE_PATH = $(KERN_HEADERS)
+	else
+		KERN_HEADERS = $(LINUX_SOURCE_PATH)
+    endif
 endif
+
 KERN_RELEASE ?= $(UNAME_R)
 KERN_BUILD_PATH ?= $(if $(KERN_HEADERS),$(KERN_HEADERS),/lib/modules/$(KERN_RELEASE)/build)
 KERN_SRC_PATH ?= $(if $(KERN_HEADERS),$(KERN_HEADERS),$(if $(wildcard /lib/modules/$(KERN_RELEASE)/source),/lib/modules/$(KERN_RELEASE)/source,$(KERN_BUILD_PATH)))
 
-BPF_NOCORE_TAG = $(subst .,_,$(KERN_RELEASE)).$(subst .,_,$(VERSION_NUM))
+BPF_NOCORE_TAG = $(subst .,_,$(KERN_RELEASE)):$(subst .,_,$(VERSION_NUM))
 
 #
 # BPF Source file
@@ -186,6 +189,9 @@ BPF_NOCORE_TAG = $(subst .,_,$(KERN_RELEASE)).$(subst .,_,$(VERSION_NUM))
 TARGETS := kern/boringssl_na
 TARGETS += kern/boringssl_a_13
 TARGETS += kern/boringssl_a_14
+TARGETS += kern/boringssl_a_15
+TARGETS += kern/boringssl_a_16
+TARGETS += kern/boringssl_a_17
 TARGETS += kern/openssl_1_1_1a
 TARGETS += kern/openssl_1_1_1b
 TARGETS += kern/openssl_1_1_1d
@@ -193,12 +199,29 @@ TARGETS += kern/openssl_1_1_1j
 TARGETS += kern/openssl_1_1_0a
 TARGETS += kern/openssl_1_0_2a
 TARGETS += kern/openssl_3_0_0
+TARGETS += kern/openssl_3_0_12
+TARGETS += kern/openssl_3_1_0
 TARGETS += kern/openssl_3_2_0
+TARGETS += kern/openssl_3_2_3
+TARGETS += kern/openssl_3_2_4
+TARGETS += kern/openssl_3_3_0
+TARGETS += kern/openssl_3_3_2
+TARGETS += kern/openssl_3_3_3
+TARGETS += kern/openssl_3_4_0
+TARGETS += kern/openssl_3_4_1
+TARGETS += kern/openssl_3_5_0
 TARGETS += kern/gotls
+TARGETS += kern/bash
 
 ifeq ($(ANDROID),0)
-	TARGETS += kern/bash
-	TARGETS += kern/gnutls
+	TARGETS += kern/zsh
+	TARGETS += kern/gnutls_3_6_12
+	TARGETS += kern/gnutls_3_6_13
+	TARGETS += kern/gnutls_3_7_0
+	TARGETS += kern/gnutls_3_7_3
+	TARGETS += kern/gnutls_3_7_7
+	TARGETS += kern/gnutls_3_8_4
+	TARGETS += kern/gnutls_3_8_7
 	TARGETS += kern/nspr
 	TARGETS += kern/mysqld
 	TARGETS += kern/postgres
@@ -238,6 +261,7 @@ EXTRA_CFLAGS_NOCORE ?= -emit-llvm -O2 -S\
 	-Wno-deprecated-declarations \
 	-Wno-compare-distinct-pointer-types \
 	-Wno-address-of-packed-member \
+	-Wno-unknown-attributes \
 	-fno-stack-protector \
 	-fno-jump-tables \
 	-fno-unwind-tables \
@@ -256,10 +280,6 @@ RPM_SOURCE0 = $(ECAPTURE_NAME)-$(TAG).tar.gz
 #
 
 OUTPUT_DIR = ./bin
-#TAR_DIR = ecapture-$(DEB_VERSION)-linux-$(GOARCH)
-#TAR_DIR_NOCORE = ecapture-$(DEB_VERSION)-linux-$(GOARCH)-nocore
-#TAR_DIR_ANDROID = ecapture-$(DEB_VERSION)-android-$(GOARCH)
-#TAR_DIR_ANDROID_NOCORE = ecapture-$(DEB_VERSION)-android-$(GOARCH)-nocore
 
 # from CLI args.
 RELEASE_NOTES ?= release_notes.txt
@@ -279,8 +299,4 @@ BUILD_DIR = build
 # Create a release snapshot
 #
 
-#OUT_ARCHIVE := $(OUTPUT_DIR)/$(TAR_DIR).tar.gz
-#OUT_ARCHIVE_NOCORE := $(OUTPUT_DIR)/$(TAR_DIR_NOCORE).tar.gz
-#OUT_ARCHIVE_ANDROID := $(OUTPUT_DIR)/$(TAR_DIR_ANDROID).tar.gz
-#OUT_ARCHIVE_ANDROID_NOCORE := $(OUTPUT_DIR)/$(TAR_DIR_ANDROID_NOCORE).tar.gz
 OUT_CHECKSUMS := checksum-$(DEB_VERSION).txt

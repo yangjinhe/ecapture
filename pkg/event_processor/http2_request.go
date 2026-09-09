@@ -27,8 +27,7 @@ import (
 	"golang.org/x/net/http2/hpack"
 )
 
-const H2Magic = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-const H2MagicLen = len(H2Magic)
+const ClientPrefaceLen = len(http2.ClientPreface)
 
 type HTTP2Request struct {
 	framer     *http2.Framer
@@ -37,12 +36,24 @@ type HTTP2Request struct {
 	isInit     bool
 	reader     *bytes.Buffer
 	bufReader  *bufio.Reader
+	hdec       *hpack.Decoder
 }
 
 func (h2r *HTTP2Request) detect(payload []byte) error {
-	data := string(payload[0:H2MagicLen])
-	if data != H2Magic {
-		return errors.New("Not match http2 magic")
+	/*
+		https://datatracker.ietf.org/doc/html/rfc7540#section-3.5
+		Defect: Currently, the detect method only checks the HTTP/2 connection Preface (Client Preface).
+		        It is assumed that the first packet of the connection preface will definitely be obtained.
+		        However, after the HTTP/2 protocol establishes a connection, subsequent frames are no longer included.
+		        If the Preface connection is not detected, subsequent messages will be recognized as HttpRequest.
+	*/
+	payloadLen := len(payload)
+	if payloadLen < ClientPrefaceLen {
+		return errors.New("payload less than http2 ClientPreface")
+	}
+	data := string(payload[0:ClientPrefaceLen])
+	if data != http2.ClientPreface {
+		return errors.New("not match http2 ClientPreface")
 	}
 	return nil
 }
@@ -51,7 +62,13 @@ func (h2r *HTTP2Request) Init() {
 	h2r.reader = bytes.NewBuffer(nil)
 	h2r.bufReader = bufio.NewReader(h2r.reader)
 	h2r.framer = http2.NewFramer(nil, h2r.bufReader)
-	h2r.framer.ReadMetaHeaders = hpack.NewDecoder(0, nil)
+	/*
+		one tuple connect should share the same dynamic table
+		https://datatracker.ietf.org/doc/html/rfc7541#section-2.2
+	*/
+	if h2r.hdec == nil {
+		h2r.hdec = hpack.NewDecoder(4096, nil)
+	}
 }
 
 func (h2r *HTTP2Request) Write(b []byte) (int, error) {
@@ -83,63 +100,93 @@ func (h2r *HTTP2Request) IsDone() bool {
 }
 
 func (h2r *HTTP2Request) Display() []byte {
-	_, err := h2r.bufReader.Discard(H2MagicLen)
-	if err != nil {
-		log.Println("[http2 request] Discard HTTP2 Magic error:", err)
-		return h2r.reader.Bytes()
+	payloadLen := len(h2r.reader.String())
+	if payloadLen >= ClientPrefaceLen {
+		data := h2r.reader.String()[0:ClientPrefaceLen]
+		if data == http2.ClientPreface {
+			_, err := h2r.bufReader.Discard(ClientPrefaceLen)
+			if err != nil {
+				log.Println("[http2 request] Discard HTTP2 Magic error:", err)
+				return h2r.reader.Bytes()
+			}
+		}
 	}
-	var encoding string
-	dataBuf := bytes.NewBuffer(nil)
+	encodingMap := make(map[uint32]string)
+	dataBufMap := make(map[uint32]*bytes.Buffer)
 	frameBuf := bytes.NewBufferString("")
 	for {
 		f, err := h2r.framer.ReadFrame()
 		if err != nil {
-			if err != io.EOF {
+			// io.EOF indicates clean end of stream
+			// io.ErrUnexpectedEOF is expected when capturing incremental TLS data
+			// where frames may be incomplete - this is normal during streaming capture
+			if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 				log.Println("[http2 request] Dump HTTP2 Frame error:", err)
 			}
 			break
 		}
 		switch f := f.(type) {
-		case *http2.MetaHeadersFrame:
-			frameBuf.WriteString(fmt.Sprintf("\nFrame Type\t=>\tHEADERS\n"))
-			for _, header := range f.Fields {
-				frameBuf.WriteString(fmt.Sprintf("%s\n", header.String()))
-				if header.Name == "content-encoding" {
-					encoding = header.Value
+		case *http2.HeadersFrame:
+			streamID := f.StreamID
+			frameBuf.WriteString(fmt.Sprintf("\nFrame Type\t=>\tHEADERS\nFrame StreamID\t=>\t%d\nFrame Length\t=>\t%d\n", streamID, f.Length))
+			if f.HeadersEnded() {
+				fields, err := h2r.hdec.DecodeFull(f.HeaderBlockFragment())
+				for _, header := range fields {
+					frameBuf.WriteString(fmt.Sprintf("%s\n", header.String()))
+					if header.Name == "content-encoding" {
+						encodingMap[streamID] = header.Value
+					}
 				}
+				if err != nil {
+					frameBuf.WriteString("[http2 request] Incorrect HPACK context, Please use PCAP mode to get correct header fields ...\n")
+				}
+			} else {
+				frameBuf.WriteString("[http2 request] Not Supported HEADERS Frame with CONTINUATION frames\n")
 			}
 		case *http2.DataFrame:
-			_, err := dataBuf.Write(f.Data())
-			if err != nil {
-				log.Println("[http2 request] Write HTTP2 Data Frame buffuer error:", err)
+			streamID := f.StreamID
+			frameBuf.WriteString(fmt.Sprintf("\nFrame Type\t=>\tDATA\nFrame StreamID\t=>\t%d\nFrame Length\t=>\t%d\n", streamID, f.Length))
+			payload := f.Data()
+			switch encodingMap[streamID] {
+			case "gzip":
+				h2r.packerType = PacketTypeGzip
+				frameBuf.WriteString("Partial entity body with gzip encoding ... \n")
+				if dataBufMap[streamID] == nil {
+					dataBufMap[streamID] = bytes.NewBuffer(nil)
+				}
+				_, err := dataBufMap[streamID].Write(payload)
+				if err != nil {
+					log.Println("[http2 request] Write HTTP2 Data Frame buffuer error:", err)
+				}
+			default:
+				h2r.packerType = PacketTypeNull
+				frameBuf.Write(payload)
+				frameBuf.WriteString("\n")
 			}
 		default:
 			fh := f.Header()
-			frameBuf.WriteString(fmt.Sprintf("\nFrame Type\t=>\t%s\n", fh.Type.String()))
+			frameBuf.WriteString(fmt.Sprintf("\nFrame Type\t=>\t%s\nFrame StreamID\t=>\t%d\n", fh.Type.String(), fh.StreamID))
 		}
 	}
-	// merge data frame
-	if dataBuf.Len() > 0 {
-		frameBuf.WriteString(fmt.Sprintf("\nFrame Type\t=>\tDATA\n"))
-		payload := dataBuf.Bytes()
-		switch encoding {
-		case "gzip":
+	// merge data frame with encoding
+	for id, buf := range dataBufMap {
+		if buf.Len() > 0 && encodingMap[id] == "gzip" {
+			payload := buf.Bytes()
 			reader, err := gzip.NewReader(bytes.NewReader(payload))
 			if err != nil {
 				log.Println("[http2 request] Create gzip reader error:", err)
-				break
+				continue
 			}
+			defer func() { _ = reader.Close() }()
 			payload, err = io.ReadAll(reader)
 			if err != nil {
 				log.Println("[http2 request] Uncompress gzip data error:", err)
-				break
+				continue
 			}
-			h2r.packerType = PacketTypeGzip
-			defer reader.Close()
-		default:
-			h2r.packerType = PacketTypeNull
+			frameBuf.WriteString(fmt.Sprintf("\nMerged Data Frame, StreamID\t=>\t%d\nMerged Data Frame, Final Length\t=>\t%d\n\n", id, len(payload)))
+			frameBuf.Write(payload)
+			frameBuf.WriteString("\n")
 		}
-		frameBuf.Write(payload)
 	}
 	return frameBuf.Bytes()
 }

@@ -1,5 +1,5 @@
-//go:build !androidgki
-// +build !androidgki
+//go:build !ecap_android
+// +build !ecap_android
 
 // Copyright 2022 CFC4N <cfc4n.cs@gmail.com>. All Rights Reserved.
 //
@@ -18,34 +18,39 @@
 package cmd
 
 import (
-	"github.com/gojue/ecapture/user/config"
-	"github.com/gojue/ecapture/user/module"
 	"github.com/spf13/cobra"
+
+	"github.com/gojue/ecapture/v2/internal/factory"
+	nsprProbe "github.com/gojue/ecapture/v2/internal/probe/nspr"
 )
 
-var nc = config.NewNsprConfig()
+var nsprConfig = nsprProbe.NewConfig()
 
-// gnutlsCmd represents the openssl command
+// nssCmd represents the nspr command
 var nssCmd = &cobra.Command{
-	Use:     "nss",
-	Aliases: []string{"nspr"},
+	Use:     "nspr",
+	Aliases: []string{"nss"},
 	Short:   "capture nss/nspr encrypted text content without CA cert for nss/nspr libraries.",
 	Long: `use eBPF uprobe/TC to capture process event data.
-ecapture nss
-ecapture nss --hex --pid=3423
-ecapture nss -l save.log --pid=3423
-ecapture nss --nspr=/lib/x86_64-linux-gnu/libnspr44.so
+ecapture nspr
+ecapture nspr --hex --pid=3423
+ecapture nspr -l save.log --pid=3423
+ecapture nspr --nspr=/lib/x86_64-linux-gnu/libnspr44.so
 `,
-	Run: nssCommandFunc,
+	RunE: nssCommandFunc,
 }
 
 func init() {
-	//nssCmd.PersistentFlags().StringVar(&nc.Firefoxpath, "firefox", "", "firefox file path, default: /usr/lib/firefox/firefox. (Deprecated)")
-	nssCmd.PersistentFlags().StringVar(&nc.Nsprpath, "nspr", "", "libnspr44.so file path, will automatically find it from curl default.")
+	nssCmd.PersistentFlags().StringVar(&nsprConfig.NSPRPath, "nspr", "", "libnspr44.so file path, will automatically find it from curl default.")
+	nssCmd.PersistentFlags().StringVar(&nsprConfig.CGroupPath, "cgroup_path", "", "cgroup v2 path for container/process filtering. Empty disables cgroup filtering.")
 	rootCmd.AddCommand(nssCmd)
 }
 
-// nssCommandFunc executes the "bash" command.
-func nssCommandFunc(command *cobra.Command, args []string) {
-	runModule(module.ModuleNameNspr, nc)
+// nssCommandFunc executes the "nspr" command using the new probe architecture.
+func nssCommandFunc(command *cobra.Command, args []string) error {
+	// Set global config from BaseConfig
+	nsprConfig.Pid = globalConf.Pid
+
+	// Run probe using the common entry point
+	return runProbe(factory.ProbeTypeNSPR, nsprConfig)
 }

@@ -1,8 +1,8 @@
-#ifndef ECAPTURE_OPENSSL_3_0_6_KERN_H
-#define ECAPTURE_OPENSSL_3_0_6_KERN_H
+#ifndef ECAPTURE_OPENSSL_3_0_0_KERN_H
+#define ECAPTURE_OPENSSL_3_0_0_KERN_H
 
-/* OPENSSL_VERSION_TEXT: OpenSSL 3.1.6 4 Jun 2024 */
-/* OPENSSL_VERSION_NUMBER: 806355040 */
+/* OPENSSL_VERSION_TEXT: OpenSSL 3.0.9 30 May 2023 */
+/* OPENSSL_VERSION_NUMBER: 805306512 */
 
 // ssl_st->version
 #define SSL_ST_VERSION 0x0
@@ -37,6 +37,9 @@
 // ssl_cipher_st->id
 #define SSL_CIPHER_ST_ID 0x18
 
+// ssl_st->early_secret
+#define SSL_ST_EARLY_SECRET 0x544
+
 // ssl_st->handshake_secret
 #define SSL_ST_HANDSHAKE_SECRET 0x584
 
@@ -54,6 +57,12 @@
 
 // bio_st->num
 #define BIO_ST_NUM 0x38
+
+// bio_st->method
+#define BIO_ST_METHOD 0x8
+
+// bio_method_st->type
+#define BIO_METHOD_ST_TYPE 0x0
 
 #include "openssl.h"
 #include "openssl_masterkey_3.0.h"

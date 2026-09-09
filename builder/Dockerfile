@@ -1,8 +1,8 @@
-FROM ubuntu:22.04 as ecapture_builder
+FROM ubuntu:22.04 AS ecapture_builder
 
 # Install Compilers
 RUN apt-get update &&\
-  apt-get install --yes build-essential pkgconf libelf-dev llvm-14 clang-14 linux-tools-common linux-tools-$(uname -r) make gcc flex bison file wget &&\
+  apt-get install --yes git build-essential pkgconf libelf-dev llvm-14 clang-14 linux-tools-common linux-headers-$(uname -r) make gcc flex bison file wget linux-source &&\
   # the for-shell built-in instruction does not count as a command 
   # and the shell used to execute the script is sh by default and not bash.
   rm -f /usr/bin/clang && ln -s /usr/bin/clang-14 /usr/bin/clang &&\
@@ -12,7 +12,7 @@ RUN apt-get update &&\
 # Install golang
 ARG TARGETARCH
 RUN if [ "$TARGETARCH" = "arm64" ] || [ "$TARGETARCH" = "amd64" ]; then\
-  wget -O go.tar.gz https://golang.google.cn/dl/go1.22.2.linux-${TARGETARCH}.tar.gz; \
+  wget -O go.tar.gz https://golang.google.cn/dl/go1.26.0.linux-${TARGETARCH}.tar.gz; \
   else \
   echo "unsupport arch" && /bin/false ; \
   fi && \
@@ -29,10 +29,10 @@ ARG VERSION
 
 RUN cd /build/ecapture &&\
   make clean &&\
-  make -j $(nproc) all SNAPSHOT_VERSION=${VERSION}_docker
+  make all SNAPSHOT_VERSION=${VERSION}_docker
 
 # ecapture release image
-FROM alpine:latest as ecapture
+FROM alpine:latest AS ecapture
 
 COPY --from=ecapture_builder /build/ecapture/bin/ecapture /ecapture
 

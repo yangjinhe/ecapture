@@ -33,6 +33,7 @@ function run() {
   sslVerMap["5"]="0"
   sslVerMap["6"]="0"
   sslVerMap["7"]="0"
+  sslVerMap["8"]="0"
 
   # shellcheck disable=SC2068
   for ver in ${!sslVerMap[@]}; do
@@ -68,7 +69,7 @@ function run() {
     ./offset >>${header_file}
     echo -e "#include \"openssl.h\"" >>${header_file}
     echo -e "#include \"openssl_masterkey_3.0.h\"" >>${header_file}
-    echo -e "\n#endif" >>${header_file}
+    echo -e "#endif" >>${header_file}
 
     # clean up
     make clean

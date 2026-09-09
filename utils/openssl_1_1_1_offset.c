@@ -27,12 +27,15 @@
     X(ssl_session_st, cipher)            \
     X(ssl_session_st, cipher_id)         \
     X(ssl_cipher_st, id)                 \
+    X(ssl_st, early_secret)              \
     X(ssl_st, handshake_secret)          \
     X(ssl_st, handshake_traffic_hash)    \
     X(ssl_st, client_app_traffic_secret) \
     X(ssl_st, server_app_traffic_secret) \
     X(ssl_st, exporter_master_secret)    \
-    X(bio_st, num)
+    X(bio_st, num)                       \
+    X(bio_st, method)                    \
+    X(bio_method_st, type)
 
 void toUpper(char *s) {
     int i = 0;
@@ -55,8 +58,7 @@ int main() {
     printf("/* OPENSSL_VERSION_TEXT: %s */\n", OPENSSL_VERSION_TEXT);
     printf("/* OPENSSL_VERSION_NUMBER: %d */\n\n", OPENSSL_VERSION_NUMBER);
 
-#define X(struct_name, field_name) \
-    format(#struct_name, #field_name, offsetof(struct struct_name, field_name));
+#define X(struct_name, field_name) format(#struct_name, #field_name, offsetof(struct struct_name, field_name));
     SSL_STRUCT_OFFSETS
 #undef X
 

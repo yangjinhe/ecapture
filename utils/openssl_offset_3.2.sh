@@ -28,7 +28,10 @@ function run() {
   sslVerMap["0"]="0"
   sslVerMap["1"]="0"
   sslVerMap["2"]="0"
-  sslVerMap["3"]="3"
+  sslVerMap["3"]="3"  # 独立的偏移地址
+  sslVerMap["4"]="4"
+  sslVerMap["5"]="4"
+  sslVerMap["6"]="4" # 2026-06-15 openssl-3.2.6 ~ 3.2.4 的偏移地址相同
 
   # shellcheck disable=SC2068
   for ver in ${!sslVerMap[@]}; do
@@ -60,9 +63,9 @@ function run() {
     echo -e "#define SSL_ST_VERSION SSL_CONNECTION_ST_VERSION\n" >>${header_file}
     echo -e "#define SSL_ST_WBIO SSL_CONNECTION_ST_WBIO\n" >>${header_file}
     echo -e "#define SSL_ST_RBIO SSL_CONNECTION_ST_RBIO\n" >>${header_file}
-    echo -e "\n#include \"openssl.h\"" >>${header_file}
+    echo -e "#include \"openssl.h\"" >>${header_file}
     echo -e "#include \"openssl_masterkey_3.2.h\"" >>${header_file}
-    echo -e "\n#endif" >>${header_file}
+    echo -e "#endif" >>${header_file}
 
     # clean up
     make clean

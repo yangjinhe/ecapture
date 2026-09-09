@@ -4,52 +4,98 @@ on:
     tags:
       - "v*"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
 
   build-on-ubuntu2204:
     runs-on: ubuntu-22.04
-    name: build on ubuntu-22.04 x86_64
+    name: release Linux/Android Version (amd64/arm64)
     steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: 'recursive'
+          fetch-depth: 0
+
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.21.0'
+          go-version: '1.26.0'
+
+      - name: Check Release Type
+        id: release_type
+        run: |
+          TAG_NAME=${{ github.ref_name }}
+          if [[ "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "IS_PRERELEASE=false" >> $GITHUB_OUTPUT
+            echo "RELEASE_TYPE=stable" >> $GITHUB_OUTPUT
+            echo "📦 Stable release detected: $TAG_NAME"
+          elif [[ "$TAG_NAME" =~ (alpha|beta|rc) ]]; then
+            echo "IS_PRERELEASE=true" >> $GITHUB_OUTPUT
+            echo "RELEASE_TYPE=prerelease" >> $GITHUB_OUTPUT
+            echo "🚧 Pre-release detected: $TAG_NAME"
+          else
+            echo "IS_PRERELEASE=false" >> $GITHUB_OUTPUT
+            echo "RELEASE_TYPE=stable" >> $GITHUB_OUTPUT
+            echo "📦 Release: $TAG_NAME"
+          fi
+        shell: bash
       - name: Install Compilers
         run: |
           sudo apt-get update
-          kernel_ver=`uname -r | cut -d'-' -f 1`
-          sudo apt-get install --yes build-essential pkgconf libelf-dev llvm-14 clang-14 linux-tools-common linux-tools-generic gcc gcc-aarch64-linux-gnu linux-source-${kernel_ver}
+          sudo apt-get install --yes \
+            build-essential \
+            pkgconf \
+            libelf-dev \
+            llvm-14 \
+            clang-14 \
+            linux-tools-common \
+            linux-tools-generic \
+            gcc \
+            gcc-aarch64-linux-gnu \
+            linux-source
           for tool in "clang" "llc" "llvm-strip"
           do
             sudo rm -f /usr/bin/$tool
             sudo ln -s /usr/bin/$tool-14 /usr/bin/$tool
           done
           cd /usr/src
-          sudo tar -xf linux-source-${kernel_ver}.tar.bz2
-          cd /usr/src/linux-source-${kernel_ver}
+          source_file=$(find . -maxdepth 1 -name "*linux-source*.tar.bz2")
+          source_dir=$(echo "$source_file" | sed 's/\.tar\.bz2//g')  
+          sudo tar -xf $source_file
+          cd $source_dir
           test -f .config || sudo make oldconfig
           sudo make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- prepare V=0
-          ls -al /usr/src/linux-source-${kernel_ver}
+          ls -al /usr/src/$source_dir
         shell: bash
-      - uses: actions/checkout@v4
-        with:
-          submodules: 'recursive'
-          fetch-depth: 0
       - name: authenticate
         run: |
           gh auth login --with-token <<<'${{ secrets.GITHUB_TOKEN }}'
-      - name: Build Changelog
-        id: github_release
-        uses: mikepenz/release-changelog-builder-action@v1
-        with:
-          configuration: "configuration.json"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Get Previous Tag
+        id: previoustag
+        run: |
+          PREVIOUS=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          echo "PREVIOUS_TAG=$PREVIOUS" >> $GITHUB_OUTPUT
+      - name: Generate Release Notes
+        id: release_notes
+        run: |
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            /repos/${{ github.repository }}/releases/generate-notes \
+            -f tag_name=${{ github.ref_name }} \
+            -f previous_tag_name=${{ steps.previoustag.outputs.PREVIOUS_TAG }} \
+            > release_notes.json
+          echo "NOTES<<EOF" >> $GITHUB_OUTPUT
+          jq -r .body release_notes.json >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
       - name: Write File
         uses: DamianReeves/write-file-action@v1.2
         with:
           path: ./bin/release_notes.txt
           contents: |
-            ${{ steps.github_release.outputs.changelog }}
+            ${{ steps.release_notes.outputs.NOTES }}
           write-mode: append
       - name: Release amd64
         run: |
@@ -62,32 +108,60 @@ jobs:
           make env
           CROSS_ARCH=arm64 make -f builder/Makefile.release release SNAPSHOT_VERSION=${{ github.ref_name }}
       - name: Publish
+        env:
+          IS_PRERELEASE: ${{ steps.release_type.outputs.IS_PRERELEASE }}
         run: |
           make -f builder/Makefile.release publish SNAPSHOT_VERSION=${{ github.ref_name }}
   build-docker-image:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+      - name: Check Release Type
+        id: release_type
+        run: |
+          TAG_NAME=${{ github.ref_name }}
+          if [[ "$TAG_NAME" =~ (alpha|beta|rc) ]]; then
+            echo "IS_PRERELEASE=true" >> $GITHUB_OUTPUT
+            echo "🚧 Pre-release detected for Docker: $TAG_NAME"
+          else
+            echo "IS_PRERELEASE=false" >> $GITHUB_OUTPUT
+            echo "📦 Stable release detected for Docker: $TAG_NAME"
+          fi
+        shell: bash
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Update submodule
         run: git submodule update --init
+      - name: Prepare Docker Tags
+        id: docker_tags
+        run: |
+          TAGS="${{ secrets.DOCKERHUB_USERNAME }}/ecapture:${{ github.ref_name }}"
+          if [[ "${{ steps.release_type.outputs.IS_PRERELEASE }}" == "false" ]]; then
+            TAGS="${TAGS}
+          ${{ secrets.DOCKERHUB_USERNAME }}/ecapture:latest"
+            echo "📦 Adding 'latest' tag for stable release"
+          else
+            echo "🚧 Skipping 'latest' tag for pre-release"
+          fi
+          echo "TAGS<<EOF" >> $GITHUB_OUTPUT
+          echo "$TAGS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           build-args: VERSION=${{ github.ref_name }}
           file: ./builder/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/ecapture:${{ github.ref_name }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/ecapture:latest
+          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/ecapture:buildcache
+          cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/ecapture:buildcache,mode=max
+          tags: ${{ steps.docker_tags.outputs.TAGS }}

@@ -20,15 +20,14 @@ if [[ ! -d "${BORINGSSL_DIR}/.git" ]]; then
 fi
 
 function run() {
-  git fetch --tags
+  git fetch --tags || echo "Warning: git fetch --tags failed (network issue?), continuing with existing tags"
   cp -f ${PROJECT_ROOT_DIR}/utils/boringssl-offset.c ${BORINGSSL_DIR}/offset.c
   declare -A sslVerMap=()
-  # get all commit about ssl/internel.h  who commit date > Apr 25 23:00:0 2021  (android 12 release)
-  # see https://android.googlesource.com/platform/external/boringssl/+/refs/heads/android12-release .
-  # range commit id from 160e1757ccacbde7488b145070eca94f2c370de2
-  # this repo is different from https://boringssl.googlesource.com/boringssl
   sslVerMap["1"]="13" # android13-release
   sslVerMap["2"]="14" # android14-release
+  sslVerMap["3"]="15" # android15-release
+  sslVerMap["4"]="16" # android16-release
+  sslVerMap["5"]="17" # android17-release
 
   # shellcheck disable=SC2068
   # shellcheck disable=SC2034
@@ -44,17 +43,26 @@ function run() {
       continue
     fi
     git checkout ${tag}
-    echo "Generating ${header_file}"
+    echo "Android Version: ${val}, Generating ${header_file}"
 
-    g++ -Wno-write-strings -Wno-invalid-offsetof -I include/ -I . -I ./src/ offset.c -o offset
+    # The offset tool (boringssl-offset.c) uses C++17 type traits to auto-detect
+    # which fields exist in this BoringSSL version and emits the appropriate
+    # macros and feature flags directly.  No version-specific sed post-processing
+    # is required here.
+    g++ -std=c++17 -Wno-write-strings -Wno-invalid-offsetof \
+        -I include/ -I . -I ./src/ offset.c -o offset
 
-    echo -e "#ifndef ECAPTURE_${header_define}" >${header_file}
-    echo -e "#define ECAPTURE_${header_define}\n" >>${header_file}
-    ./offset >>${header_file}
-    echo -e "#include \"boringssl_const.h\"" >>${header_file}
-    echo -e "#include \"boringssl_masterkey.h\"" >>${header_file}
-    echo -e "#include \"openssl.h\"" >>${header_file}
-    echo -e "\n#endif" >>${header_file}
+    {
+      echo "#ifndef ECAPTURE_${header_define}"
+      echo "#define ECAPTURE_${header_define}"
+      echo ""
+      ./offset
+      echo "#include \"boringssl_const.h\""
+      echo "#include \"boringssl_masterkey.h\""
+      echo "#include \"openssl.h\""
+      echo ""
+      echo "#endif"
+    } > "${header_file}"
 
   done
 

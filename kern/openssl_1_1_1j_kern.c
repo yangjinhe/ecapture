@@ -37,6 +37,9 @@
 // ssl_cipher_st->id
 #define SSL_CIPHER_ST_ID 0x18
 
+// ssl_st->early_secret
+#define SSL_ST_EARLY_SECRET 0x13c
+
 // ssl_st->handshake_secret
 #define SSL_ST_HANDSHAKE_SECRET 0x17c
 
@@ -54,6 +57,12 @@
 
 // bio_st->num
 #define BIO_ST_NUM 0x30
+
+// bio_st->method
+#define BIO_ST_METHOD 0x0
+
+// bio_method_st->type
+#define BIO_METHOD_ST_TYPE 0x0
 
 #include "openssl.h"
 #include "openssl_masterkey.h"
